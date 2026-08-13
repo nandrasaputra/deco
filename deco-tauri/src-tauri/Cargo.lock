@@ -662,7 +662,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "deco-mac"
+name = "deco-tauri"
 version = "0.1.0"
 dependencies = [
  "serde",

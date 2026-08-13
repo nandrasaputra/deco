@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    deco_mac_lib::run()
+    deco_tauri_lib::run()
 }
