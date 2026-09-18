@@ -24,6 +24,7 @@ import {
   RefreshCw,
   X,
   RotateCcw,
+  Menu,
 } from "lucide-react";
 import "./App.css";
 
@@ -102,6 +103,8 @@ function App() {
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([]);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
 
   async function refresh() {
     setLoading(true);
@@ -294,7 +297,7 @@ function App() {
       
 
       <div className="app-body">
-        <aside className="sidebar">
+        <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
           <div className="brand">
             <div className="brand-icon">
               <Bot size={22} />
@@ -312,6 +315,7 @@ function App() {
                 <button
                   key={item.label}
                   className={`nav-item ${item.label === "Devices" ? "active" : ""}`}
+                  title={item.label}
                 >
                   <Icon size={16} />
                   <span>{item.label}</span>
@@ -351,8 +355,17 @@ function App() {
           </div>
         </aside>
 
+        {sidebarOpen && <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />}
+
          <main className="main">
            <div className="header">
+             <button
+               className="icon-btn sidebar-toggle"
+               onClick={() => setSidebarOpen((v) => !v)}
+               title="Menu"
+             >
+               <Menu size={16} />
+             </button>
              <div className="header-title">
                <h1>Devices</h1>
                <p>{platform === "android" ? "Manage your Android Virtual Devices" : "Manage your iOS Simulators"}</p>
@@ -367,7 +380,7 @@ function App() {
                  }}
                >
                  <Bot size={13} />
-                 Android
+                 <span>Android</span>
                </button>
                <button
                  className={platform === "ios" ? "active" : ""}
@@ -377,7 +390,7 @@ function App() {
                  }}
                >
                  <Smartphone size={13} />
-                 iOS
+                 <span>iOS</span>
                </button>
              </div>
 
@@ -389,6 +402,17 @@ function App() {
                 onChange={(e) => setQuery(e.target.value)}
               />
             </div>
+
+             <button
+               className="btn-primary"
+               onClick={() => {
+                 if (platform === "android") setShowCreate(true);
+                 else setError("Create iOS simulators in Xcode, then refresh Deco.");
+               }}
+             >
+               <Plus size={16} />
+               <span>{platform === "android" ? "Create Emulator" : "Create Simulator"}</span>
+             </button>
 
             <button
               className="icon-btn"
@@ -407,17 +431,6 @@ function App() {
                 <Grid2X2 size={16} />
               </button>
             </div>
-
-             <button
-               className="btn-primary"
-               onClick={() => {
-                 if (platform === "android") setShowCreate(true);
-                 else setError("Create iOS simulators in Xcode, then refresh Deco.");
-               }}
-             >
-               <Plus size={16} />
-               <span>{platform === "android" ? "Create Emulator" : "Create Simulator"}</span>
-             </button>
           </div>
 
           {error && <div className="error-banner">{error}</div>}
@@ -442,7 +455,7 @@ function App() {
                   <div
                     key={emu.name}
                     className={`table-row ${emu.name === selectedId ? "selected" : ""}`}
-                    onClick={() => setSelectedId(emu.name)}
+                    onClick={() => { setSelectedId(emu.name); setDetailOpen(true); }}
                   >
                     <span className="cell-name">{emu.display_name}</span>
                     <span>
@@ -521,7 +534,7 @@ function App() {
                    <div
                      key={sim.udid}
                      className={`table-row ios-row ${sim.udid === selectedId ? "selected" : ""}`}
-                     onClick={() => setSelectedId(sim.udid)}
+                     onClick={() => { setSelectedId(sim.udid); setDetailOpen(true); }}
                    >
                      <span className="cell-name ios-name">
                        <Smartphone size={14} />
@@ -559,7 +572,12 @@ function App() {
           </div>
         </main>
 
-        <aside className="detail-panel">
+        <aside className={`detail-panel ${detailOpen ? "open" : ""}`}>
+          <div className="detail-panel-toolbar">
+            <button className="icon-btn detail-panel-close" onClick={() => setDetailOpen(false)} title="Close">
+              <X size={16} />
+            </button>
+          </div>
            {platform === "android" && selected ? (
             <>
               <div className="detail-header">

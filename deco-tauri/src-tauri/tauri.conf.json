@@ -15,8 +15,8 @@
         "title": "Deco — Android Emulator Manager",
         "width": 1536,
         "height": 1024,
-        "minWidth": 1080,
-        "minHeight": 720,
+        "minWidth": 400,
+        "minHeight": 400,
         "center": true
       }
     ],
