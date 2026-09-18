@@ -571,16 +571,7 @@ function App() {
                 </div>
               </div>
 
-              <div className="preview-row">
-                <div className="phone-preview">
-                  <div className="phone-screen">
-                    <div className="phone-time">9:30</div>
-                    <div className="phone-wallpaper" />
-                    <div className="phone-dock">● ● ● ●</div>
-                  </div>
-                </div>
-
-                <div className="detail-metadata">
+              <div className="detail-metadata">
                   <div className="meta-row">
                     <label>Android Version</label>
                     <span>API {selected.api}</span>
@@ -606,7 +597,6 @@ function App() {
                     <span>{selected.system_image}</span>
                   </div>
                 </div>
-              </div>
 
               <div className="actions-grid">
                 <div className="action-row">
@@ -693,21 +683,12 @@ function App() {
                    {selectedSimulator.status}
                  </div>
                </div>
-               <div className="preview-row">
-                 <div className="phone-preview ios-preview">
-                   <div className="phone-screen">
-                     <div className="phone-time">9:41</div>
-                     <div className="phone-wallpaper ios-wallpaper" />
-                     <div className="phone-dock">● ● ● ●</div>
-                   </div>
-                 </div>
                  <div className="detail-metadata">
                    <div className="meta-row"><label>Operating System</label><span>{selectedSimulator.runtime}</span></div>
                    <div className="meta-row"><label>Device Type</label><span>{selectedSimulator.device_type}</span></div>
                    <div className="meta-row"><label>OS Version</label><span>iOS {selectedSimulator.os}</span></div>
                    <div className="meta-row"><label>UDID</label><span className="detail-udid">{selectedSimulator.udid}</span></div>
                  </div>
-               </div>
                <div className="actions-grid">
                  <div className="action-row">
                    <div className="action-card" onClick={() => selectedSimulator.status === "Booted" ? handleShutdownSimulator(selectedSimulator.udid) : handleBootSimulator(selectedSimulator.udid)}>

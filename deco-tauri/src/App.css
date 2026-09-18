@@ -515,10 +515,6 @@ input {
   font-size: 11px !important;
 }
 
-.ios-wallpaper {
-  background: linear-gradient(145deg, #9bc5ff, #d7b4ff 55%, #f7c4d7);
-}
-
 .cell-muted {
   font-size: 12px;
   color: var(--text-secondary);
@@ -620,56 +616,6 @@ input {
 
 .detail-header .status-line.stopped {
   color: var(--text-secondary);
-}
-
-.preview-row {
-  display: flex;
-  gap: 20px;
-  padding: 8px 0;
-}
-
-.phone-preview {
-  flex-shrink: 0;
-  width: 150px;
-  height: 300px;
-  border-radius: 22px;
-  background: #111827;
-  padding: 8px 6px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.phone-screen {
-  width: 138px;
-  height: 270px;
-  border-radius: 15px;
-  background: #dce8f7;
-  display: flex;
-  flex-direction: column;
-  padding: 14px 10px;
-  gap: 12px;
-  overflow: hidden;
-}
-
-.phone-time {
-  font-size: 18px;
-  font-weight: 500;
-  color: #111827;
-  text-align: center;
-}
-
-.phone-wallpaper {
-  flex: 1;
-  border-radius: 8px;
-  background: #7185a2;
-}
-
-.phone-dock {
-  font-size: 11px;
-  color: #111827;
-  text-align: center;
-  letter-spacing: 2px;
 }
 
 .detail-metadata {
