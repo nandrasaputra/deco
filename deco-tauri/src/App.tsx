@@ -65,6 +65,15 @@ interface Emulator {
   serial: string | null;
 }
 
+interface Simulator {
+  udid: string;
+  name: string;
+  runtime: string;
+  os: string;
+  device_type: string;
+  status: "Booted" | "Shutdown" | string;
+}
+
 interface SdkInfo {
   path: string;
   installed: boolean;
@@ -80,7 +89,9 @@ const navItems = [
 ];
 
 function App() {
+  const [platform, setPlatform] = useState<"android" | "ios">("android");
   const [emulators, setEmulators] = useState<Emulator[]>([]);
+  const [simulators, setSimulators] = useState<Simulator[]>([]);
   const [sdk, setSdk] = useState<SdkInfo | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -96,16 +107,25 @@ function App() {
     setLoading(true);
     setError(null);
     try {
-      const [emus, sdkInfo] = await Promise.all([
-        invoke<Emulator[]>("list_emulators"),
-        invoke<SdkInfo>("get_sdk_info"),
-      ]);
-      setEmulators(emus);
-      setSdk(sdkInfo);
-      setSelectedId((prev) => {
-        if (prev && emus.some((e) => e.name === prev)) return prev;
-        return emus[0]?.name ?? null;
-      });
+      if (platform === "android") {
+        const [emus, sdkInfo] = await Promise.all([
+          invoke<Emulator[]>("list_emulators"),
+          invoke<SdkInfo>("get_sdk_info"),
+        ]);
+        setEmulators(emus);
+        setSdk(sdkInfo);
+        setSelectedId((prev) => {
+          if (prev && emus.some((e) => e.name === prev)) return prev;
+          return emus[0]?.name ?? null;
+        });
+      } else {
+        const sims = await invoke<Simulator[]>("list_simulators");
+        setSimulators(sims);
+        setSelectedId((prev) => {
+          if (prev && sims.some((sim) => sim.udid === prev)) return prev;
+          return sims[0]?.udid ?? null;
+        });
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -117,12 +137,16 @@ function App() {
     refresh();
     const id = setInterval(refresh, 5000);
     return () => clearInterval(id);
-  }, []);
+  }, [platform]);
 
   const selected = emulators.find((e) => e.name === selectedId) ?? null;
+  const selectedSimulator = simulators.find((sim) => sim.udid === selectedId) ?? null;
 
   const filtered = emulators.filter((e) =>
     e.display_name.toLowerCase().includes(query.toLowerCase()),
+  );
+  const filteredSimulators = simulators.filter((sim) =>
+    sim.name.toLowerCase().includes(query.toLowerCase()),
   );
 
   async function handleStart(name: string, cold: boolean) {
@@ -166,6 +190,34 @@ function App() {
   async function handleOpenSdkManager() {
     try {
       await invoke("open_sdk_manager");
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function handleBootSimulator(udid: string) {
+    try {
+      await invoke("boot_simulator", { udid });
+      setTimeout(refresh, 1200);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function handleShutdownSimulator(udid: string) {
+    try {
+      await invoke("shutdown_simulator", { udid });
+      setTimeout(refresh, 800);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function handleEraseSimulator(udid: string, name: string) {
+    if (!confirm(`Erase all data from simulator "${name}"?`)) return;
+    try {
+      await invoke("erase_simulator", { udid });
+      setTimeout(refresh, 800);
     } catch (e) {
       setError(String(e));
     }
@@ -239,14 +291,7 @@ function App() {
 
   return (
     <div className="app">
-      <header className="titlebar">
-        <div className="titlebar-dots">
-          <span className="titlebar-dot close" />
-          <span className="titlebar-dot minimize" />
-          <span className="titlebar-dot maximize" />
-        </div>
-        <span className="titlebar-title">Deco — Android Emulator Manager</span>
-      </header>
+      
 
       <div className="app-body">
         <aside className="sidebar">
@@ -306,12 +351,35 @@ function App() {
           </div>
         </aside>
 
-        <main className="main">
-          <div className="header">
-            <div className="header-title">
-              <h1>Emulators</h1>
-              <p>Manage your Android Virtual Devices</p>
-            </div>
+         <main className="main">
+           <div className="header">
+             <div className="header-title">
+               <h1>Devices</h1>
+               <p>{platform === "android" ? "Manage your Android Virtual Devices" : "Manage your iOS Simulators"}</p>
+             </div>
+
+             <div className="platform-toggle" role="tablist" aria-label="Platform">
+               <button
+                 className={platform === "android" ? "active" : ""}
+                 onClick={() => {
+                   setPlatform("android");
+                   setQuery("");
+                 }}
+               >
+                 <Bot size={13} />
+                 Android
+               </button>
+               <button
+                 className={platform === "ios" ? "active" : ""}
+                 onClick={() => {
+                   setPlatform("ios");
+                   setQuery("");
+                 }}
+               >
+                 <Smartphone size={13} />
+                 iOS
+               </button>
+             </div>
 
             <div className="search">
               <Search size={14} />
@@ -340,29 +408,37 @@ function App() {
               </button>
             </div>
 
-            <button className="btn-primary" onClick={() => setShowCreate(true)}>
-              <Plus size={16} />
-              <span>Create Emulator</span>
-            </button>
+             <button
+               className="btn-primary"
+               onClick={() => {
+                 if (platform === "android") setShowCreate(true);
+                 else setError("Create iOS simulators in Xcode, then refresh Deco.");
+               }}
+             >
+               <Plus size={16} />
+               <span>{platform === "android" ? "Create Emulator" : "Create Simulator"}</span>
+             </button>
           </div>
 
           {error && <div className="error-banner">{error}</div>}
 
           <div className="table-wrap">
-            <div className="table-header">
-              <span>Name</span>
-              <span>Status</span>
-              <span>API</span>
-              <span>Size</span>
-              <span>Actions</span>
-            </div>
-            <div className="table-body">
-              {loading && emulators.length === 0 ? (
-                <div className="empty-state">Loading emulators…</div>
-              ) : filtered.length === 0 ? (
-                <div className="empty-state">No emulators found.</div>
-              ) : (
-                filtered.map((emu) => (
+             <div className={`table-header ${platform === "ios" ? "ios-columns" : ""}`}>
+               <span>Name</span>
+               <span>Status</span>
+               <span>{platform === "android" ? "API" : "OS"}</span>
+               <span>{platform === "android" ? "Size" : "Type"}</span>
+               <span>Actions</span>
+             </div>
+             <div className="table-body">
+               {loading && (platform === "android" ? emulators.length === 0 : simulators.length === 0) ? (
+                 <div className="empty-state">Loading emulators…</div>
+               ) : platform === "android" && filtered.length === 0 ? (
+                 <div className="empty-state">No emulators found.</div>
+               ) : platform === "ios" && filteredSimulators.length === 0 ? (
+                 <div className="empty-state">No iOS simulators found. Install a runtime in Xcode.</div>
+               ) : platform === "android" ? (
+                 filtered.map((emu) => (
                   <div
                     key={emu.name}
                     className={`table-row ${emu.name === selectedId ? "selected" : ""}`}
@@ -438,15 +514,53 @@ function App() {
                         </>
                       )}
                     </div>
-                  </div>
-                ))
-              )}
+                   </div>
+                 ))
+               ) : (
+                 filteredSimulators.map((sim) => (
+                   <div
+                     key={sim.udid}
+                     className={`table-row ios-row ${sim.udid === selectedId ? "selected" : ""}`}
+                     onClick={() => setSelectedId(sim.udid)}
+                   >
+                     <span className="cell-name ios-name">
+                       <Smartphone size={14} />
+                       <span>
+                         <strong>{sim.name}</strong>
+                         <small>{sim.device_type}</small>
+                       </span>
+                     </span>
+                     <span>
+                       <span className={`status-badge ${sim.status === "Booted" ? "running" : "stopped"}`}>
+                         <span className="dot" />
+                         {sim.status}
+                       </span>
+                     </span>
+                     <span className="cell-muted">{sim.os}</span>
+                     <span className="cell-muted">{sim.device_type}</span>
+                     <div className="row-actions">
+                       {sim.status === "Booted" ? (
+                         <button className="row-action" title="Shutdown" onClick={(e) => { e.stopPropagation(); handleShutdownSimulator(sim.udid); }}>
+                           <Square size={14} />
+                         </button>
+                       ) : (
+                         <button className="row-action" title="Boot" onClick={(e) => { e.stopPropagation(); handleBootSimulator(sim.udid); }}>
+                           <Play size={14} />
+                         </button>
+                       )}
+                       <button className="row-action" title="Erase Data" onClick={(e) => { e.stopPropagation(); handleEraseSimulator(sim.udid, sim.name); }}>
+                         <Trash2 size={14} />
+                       </button>
+                     </div>
+                   </div>
+                 ))
+               )}
             </div>
           </div>
         </main>
 
         <aside className="detail-panel">
-          {selected ? (
+           {platform === "android" && selected ? (
             <>
               <div className="detail-header">
                 <h2>{selected.display_name}</h2>
@@ -571,8 +685,44 @@ function App() {
                 </div>
               </div>
             </>
-          ) : (
-            <div className="empty-state">No emulator selected.</div>
+           ) : platform === "ios" && selectedSimulator ? (
+             <>
+               <div className="detail-header">
+                 <h2>{selectedSimulator.name}</h2>
+                 <div className={`status-line ${selectedSimulator.status === "Booted" ? "running" : "stopped"}`}>
+                   {selectedSimulator.status}
+                 </div>
+               </div>
+               <div className="preview-row">
+                 <div className="phone-preview ios-preview">
+                   <div className="phone-screen">
+                     <div className="phone-time">9:41</div>
+                     <div className="phone-wallpaper ios-wallpaper" />
+                     <div className="phone-dock">● ● ● ●</div>
+                   </div>
+                 </div>
+                 <div className="detail-metadata">
+                   <div className="meta-row"><label>Operating System</label><span>{selectedSimulator.runtime}</span></div>
+                   <div className="meta-row"><label>Device Type</label><span>{selectedSimulator.device_type}</span></div>
+                   <div className="meta-row"><label>OS Version</label><span>iOS {selectedSimulator.os}</span></div>
+                   <div className="meta-row"><label>UDID</label><span className="detail-udid">{selectedSimulator.udid}</span></div>
+                 </div>
+               </div>
+               <div className="actions-grid">
+                 <div className="action-row">
+                   <div className="action-card" onClick={() => selectedSimulator.status === "Booted" ? handleShutdownSimulator(selectedSimulator.udid) : handleBootSimulator(selectedSimulator.udid)}>
+                     <button className="primary">{selectedSimulator.status === "Booted" ? <Square size={18} /> : <Play size={18} />}</button>
+                     <span>{selectedSimulator.status === "Booted" ? "Shutdown" : "Boot"}</span>
+                   </div>
+                   <div className="action-card" onClick={() => handleEraseSimulator(selectedSimulator.udid, selectedSimulator.name)}>
+                     <button className="danger"><Trash2 size={18} /></button>
+                     <span>Erase Data</span>
+                   </div>
+                 </div>
+               </div>
+             </>
+           ) : (
+             <div className="empty-state">No emulator selected.</div>
           )}
         </aside>
       </div>

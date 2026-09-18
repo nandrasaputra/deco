@@ -22,6 +22,16 @@ pub struct SdkInfo {
     pub installed: bool,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SimulatorInfo {
+    pub udid: String,
+    pub name: String,
+    pub runtime: String,
+    pub os: String,
+    pub device_type: String,
+    pub status: String,
+}
+
 fn home_dir() -> Result<PathBuf, String> {
     std::env::var("HOME")
         .map(PathBuf::from)
@@ -128,6 +138,62 @@ fn parse_api_level(target: &str) -> String {
         .to_string()
 }
 
+fn parse_simulator_line(line: &str, runtime: &str) -> Option<SimulatorInfo> {
+    let line = line.trim();
+    let open = line.rfind(" (")?;
+    let status_end = line.len().checked_sub(1)?;
+    if !line.ends_with(')') || open >= status_end {
+        return None;
+    }
+    let status = line[open + 2..status_end].to_string();
+    let before_status = &line[..open];
+    let udid_start = before_status.rfind(" (")?;
+    let udid_end = before_status.len().checked_sub(1)?;
+    let udid = before_status[udid_start + 2..udid_end].to_string();
+    let name = before_status[..udid_start].trim().to_string();
+    if name.is_empty() || udid.is_empty() {
+        return None;
+    }
+    let os = runtime.strip_prefix("iOS ").unwrap_or(runtime).to_string();
+    let device_type = name
+        .split_once(" (")
+        .map(|(_, value)| value.trim_end_matches(')').to_string())
+        .unwrap_or_else(|| {
+            if name.starts_with("iPhone") {
+                "iPhone".to_string()
+            } else if name.starts_with("iPad") {
+                "iPad".to_string()
+            } else {
+                "Simulator".to_string()
+            }
+        });
+    Some(SimulatorInfo {
+        udid,
+        name,
+        runtime: runtime.to_string(),
+        os,
+        device_type,
+        status,
+    })
+}
+
+fn list_simulators_impl(output: &str) -> Vec<SimulatorInfo> {
+    let mut runtime = String::new();
+    let mut simulators = Vec::new();
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("-- ") && trimmed.ends_with(" --") {
+            runtime = trimmed[3..trimmed.len() - 3].to_string();
+            continue;
+        }
+        if let Some(simulator) = parse_simulator_line(trimmed, &runtime) {
+            simulators.push(simulator);
+        }
+    }
+    simulators.sort_by(|a, b| a.name.cmp(&b.name));
+    simulators
+}
+
 #[tauri::command]
 fn get_sdk_info() -> Result<SdkInfo, String> {
     match sdk_path() {
@@ -140,6 +206,66 @@ fn get_sdk_info() -> Result<SdkInfo, String> {
             installed: false,
         }),
     }
+}
+
+#[tauri::command]
+async fn list_simulators() -> Result<Vec<SimulatorInfo>, String> {
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        tokio::process::Command::new("xcrun")
+            .args(["simctl", "list", "devices", "available"])
+            .output(),
+    )
+    .await
+    .map_err(|_| "xcrun simctl timed out".to_string())?
+    .map_err(|e| format!("Failed to run xcrun simctl: {e}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(list_simulators_impl(&String::from_utf8_lossy(&output.stdout)))
+}
+
+async fn run_simctl(args: Vec<&str>) -> Result<(), String> {
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        tokio::process::Command::new("xcrun")
+            .arg("simctl")
+            .args(&args)
+            .output(),
+    )
+    .await
+    .map_err(|_| format!("simctl {} timed out", args.join(" ")))?
+    .map_err(|e| format!("Failed to run xcrun simctl: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(if message.is_empty() {
+            "simctl command failed".to_string()
+        } else {
+            message
+        })
+    }
+}
+
+#[tauri::command]
+async fn boot_simulator(udid: String) -> Result<(), String> {
+    run_simctl(vec!["boot", &udid]).await?;
+    Command::new("open")
+        .args(["-a", "Simulator"])
+        .spawn()
+        .map_err(|e| format!("Failed to open Simulator: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn shutdown_simulator(udid: String) -> Result<(), String> {
+    run_simctl(vec!["shutdown", &udid]).await
+}
+
+#[tauri::command]
+async fn erase_simulator(udid: String) -> Result<(), String> {
+    run_simctl(vec!["erase", &udid]).await
 }
 
 #[tauri::command]
@@ -665,6 +791,10 @@ pub fn run() {
             stop_emulator,
             wipe_emulator,
             get_sdk_info,
+            list_simulators,
+            boot_simulator,
+            shutdown_simulator,
+            erase_simulator,
             list_devices,
             list_system_images,
             create_emulator,
@@ -678,4 +808,21 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::list_simulators_impl;
+
+    #[test]
+    fn parses_available_simulators_by_runtime_and_status() {
+        let output = "== Devices ==\n-- iOS 17.5 --\n    iPhone 15 Pro (ABC-123) (Booted)\n    iPad Air (DEF-456) (Shutdown)\n";
+        let simulators = list_simulators_impl(output);
+        assert_eq!(simulators.len(), 2);
+        let iphone = simulators.iter().find(|sim| sim.udid == "ABC-123").unwrap();
+        let ipad = simulators.iter().find(|sim| sim.udid == "DEF-456").unwrap();
+        assert_eq!(iphone.os, "17.5");
+        assert_eq!(iphone.status, "Booted");
+        assert_eq!(ipad.udid, "DEF-456");
+    }
 }
