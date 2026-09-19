@@ -38,7 +38,46 @@ fn home_dir() -> Result<PathBuf, String> {
         .map_err(|_| "Could not determine HOME directory".to_string())
 }
 
+/// Path to the app's persistent settings file.
+fn settings_path() -> Result<PathBuf, String> {
+    Ok(home_dir()?.join(".deco").join("settings.json"))
+}
+
+/// Read the previously-saved custom SDK path override, if any.
+fn sdk_path_override() -> Option<PathBuf> {
+    let path = settings_path().ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).ok()?)
+        .ok()?;
+    match parsed.get("sdk_path") {
+        Some(serde_json::Value::String(s)) if !s.is_empty() => Some(PathBuf::from(s)),
+        _ => None,
+    }
+}
+
+/// Save (or clear, when empty) the custom SDK path override.
+fn save_sdk_path_override(path: &str) -> Result<(), String> {
+    let settings_file = settings_path()?;
+    if let Some(parent) = settings_file.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Could not create settings directory: {e}"))?;
+    }
+    let mut value: serde_json::Value = match std::fs::read_to_string(&settings_file) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or(serde_json::Value::Object(Default::default())),
+        Err(_) => serde_json::Value::Object(Default::default()),
+    };
+    value["sdk_path"] = serde_json::Value::String(path.to_string());
+    std::fs::write(&settings_file, serde_json::to_string_pretty(&value).unwrap())
+        .map_err(|e| format!("Could not write settings: {e}"))
+}
+
 fn sdk_path() -> Result<PathBuf, String> {
+    // A user-specified override takes precedence over environment defaults.
+    if let Some(p) = sdk_path_override() {
+        if p.exists() {
+            return Ok(p);
+        }
+        return Err(format!("Android SDK not found at custom path: {}", p.display()));
+    }
     if let Ok(p) = std::env::var("ANDROID_SDK_ROOT") {
         let p = PathBuf::from(p);
         if p.exists() {
@@ -58,6 +97,12 @@ fn sdk_path() -> Result<PathBuf, String> {
     Err("Android SDK not found".to_string())
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SdkPathInfo {
+    pub current: String,
+    pub custom: String,
+}
+
 fn emulator_bin(sdk: &Path) -> PathBuf {
     sdk.join("emulator").join("emulator")
 }
@@ -72,6 +117,24 @@ fn avd_dir() -> Result<PathBuf, String> {
 
 fn run_output(cmd: &mut Command) -> Result<String, String> {
     let out = cmd.output().map_err(|e| format!("Failed to run command: {e}"))?;
+    Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+/// Like run_output but checks for a successful exit and includes stderr on failure.
+fn run_checked(cmd: &mut Command) -> Result<String, String> {
+    let out = cmd.output().map_err(|e| format!("Failed to run command: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            "command failed (no output)".to_string()
+        };
+        return Err(detail);
+    }
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
@@ -209,6 +272,36 @@ fn get_sdk_info() -> Result<SdkInfo, String> {
 }
 
 #[tauri::command]
+fn get_sdk_path_info() -> Result<SdkPathInfo, String> {
+    let current = sdk_path().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+    let custom = sdk_path_override().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+    Ok(SdkPathInfo { current, custom })
+}
+
+#[tauri::command]
+fn set_sdk_path(path: String) -> Result<(), String> {
+    let trimmed = path.trim().to_string();
+    if trimmed.is_empty() {
+        // Clearing the custom override: write empty string which get_sdk_path will ignore.
+        save_sdk_path_override("")
+    } else {
+        let p = std::path::Path::new(&trimmed);
+        if !p.exists() {
+            return Err(format!("Path does not exist: {trimmed}"));
+        }
+        if !p.join("platform-tools").join("adb").exists()
+            && !p.join("emulator").join("emulator").exists()
+            && !p.join("cmdline-tools").exists()
+        {
+            return Err(
+                "This path doesn't look like an Android SDK directory (no platform-tools, emulator, or cmdline-tools found). Are you sure?".to_string(),
+            );
+        }
+        save_sdk_path_override(&trimmed)
+    }
+}
+
+#[tauri::command]
 async fn list_simulators() -> Result<Vec<SimulatorInfo>, String> {
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(10),
@@ -269,11 +362,24 @@ async fn erase_simulator(udid: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_simulator_app() -> Result<(), String> {
+    Command::new("open")
+        .args(["-a", "Simulator"])
+        .spawn()
+        .map_err(|e| format!("Failed to open Simulator: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
 fn list_emulators() -> Result<Vec<EmulatorInfo>, String> {
-    let sdk = sdk_path()?;
     let avd = avd_dir()?;
 
-    let running = running_avd_names(&sdk);
+    // Resolve running status only when an SDK/adb is available. Without one we can
+    // still list locally-readable AVDs; they are simply treated as stopped.
+    let running = match sdk_path() {
+        Ok(sdk) => running_avd_names(&sdk),
+        Err(_) => Vec::new(),
+    };
 
     let mut emulators: Vec<EmulatorInfo> = Vec::new();
 
@@ -383,7 +489,7 @@ fn start_emulator(name: String, cold: bool) -> Result<(), String> {
 fn stop_emulator(serial: String) -> Result<(), String> {
     let sdk = sdk_path()?;
     let adb = adb_bin(&sdk);
-    run_output(
+    run_checked(
         Command::new(&adb)
             .arg("-s")
             .arg(&serial)
@@ -482,7 +588,7 @@ fn sdkmanager(sdk: &Path) -> Result<PathBuf, String> {
 fn list_devices() -> Result<Vec<DeviceDefinition>, String> {
     let sdk = sdk_path()?;
     let avdmgr = avdmanager(&sdk)?;
-    let out = run_output(Command::new(&avdmgr).arg("list").arg("device"))?;
+    let out = run_checked(Command::new(&avdmgr).arg("list").arg("device"))?;
 
     let mut devices = Vec::new();
     let mut current_id = String::new();
@@ -554,7 +660,7 @@ fn create_emulator(
     let sdk = sdk_path()?;
     let avdmgr = avdmanager(&sdk)?;
 
-    let out = run_output(
+    let out = run_checked(
         Command::new(&avdmgr)
             .arg("create")
             .arg("avd")
@@ -567,7 +673,7 @@ fn create_emulator(
             .arg("--force"),
     )?;
 
-    // avdmanager writes progress to stdout/stderr; treat missing output as success
+    // avdmanager writes progress to stdout; a failed create is caught by run_checked
     let _ = out;
     Ok(())
 }
@@ -589,7 +695,7 @@ fn delete_emulator(name: String) -> Result<(), String> {
         }
     }
 
-    let out = run_output(
+    let out = run_checked(
         Command::new(&avdmgr)
             .arg("delete")
             .arg("avd")
@@ -605,9 +711,56 @@ fn open_sdk_manager() -> Result<(), String> {
     let sdk = sdk_path()?;
     let sdk_mgr = sdkmanager(&sdk)?;
 
-    Command::new(&sdk_mgr)
+    if !sdk_mgr.exists() {
+        return Err("sdkmanager binary not found in Android SDK".to_string());
+    }
+
+    // Create a temporary shell script so sdkmanager opens in a visible Terminal window.
+    let script_content = format!(
+        r#"#!/bin/bash
+echo "============================================"
+echo "  Android SDK Manager"
+echo "  SDK: {}
+echo "============================================"
+echo ""
+echo "Usage examples:"
+echo "  sdkmanager --list                     List installed & available packages"
+echo "  sdkmanager 'platforms;android-35'    Install a specific package"
+echo "  sdkmanager --update                   Update all installed packages"
+echo ""
+echo "Type 'exit' or Cmd+Q to close this window."
+echo "============================================"
+echo ""
+exec "$(dirname "$0")/sdkmanager" "$@"
+"#,
+        sdk.display()
+    );
+
+    let script_dir = std::env::temp_dir().join("deco-sdkmanager");
+    std::fs::create_dir_all(&script_dir)
+        .map_err(|e| format!("Could not create temp dir: {e}"))?;
+
+    let script_path = script_dir.join("sdkmanager-launcher.sh");
+    std::fs::write(&script_path, &script_content)
+        .map_err(|e| format!("Could not write launcher script: {e}"))?;
+
+    // Make executable
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| format!("Could not set permissions: {e}"))?;
+
+    // Also symlink sdkmanager next to it so the script can find it
+    let sdkmanager_link = script_dir.join("sdkmanager");
+    if !sdkmanager_link.exists() {
+        std::os::unix::fs::symlink(&sdk_mgr, &sdkmanager_link)
+            .map_err(|e| format!("Could not create symlink: {e}"))?;
+    }
+
+    Command::new("open")
+        .args(["-a", "Terminal", script_path.to_str().unwrap_or_default()])
         .spawn()
-        .map_err(|e| format!("Failed to open SDK manager: {e}"))?;
+        .map_err(|e| format!("Failed to open Terminal: {e}"))?;
+
     Ok(())
 }
 
@@ -699,7 +852,7 @@ fn snapshot_emulator(avd: String, snapshot_name: String) -> Result<(), String> {
         .map(|(_, s)| s.clone())
         .ok_or_else(|| "Emulator is not running; snapshots require a running instance".to_string())?;
 
-    run_output(
+    run_checked(
         Command::new(&adb)
             .arg("-s")
             .arg(&serial)
@@ -723,7 +876,7 @@ fn restore_snapshot(avd: String, snapshot_name: String) -> Result<(), String> {
         .map(|(_, s)| s.clone())
         .ok_or_else(|| "Emulator is not running; snapshots require a running instance".to_string())?;
 
-    run_output(
+    run_checked(
         Command::new(&adb)
             .arg("-s")
             .arg(&serial)
@@ -747,7 +900,7 @@ fn delete_snapshot(avd: String, snapshot_name: String) -> Result<(), String> {
         .map(|(_, s)| s.clone())
         .ok_or_else(|| "Emulator is not running; snapshots require a running instance".to_string())?;
 
-    run_output(
+    run_checked(
         Command::new(&adb)
             .arg("-s")
             .arg(&serial)
@@ -764,7 +917,7 @@ fn delete_snapshot(avd: String, snapshot_name: String) -> Result<(), String> {
 fn get_logs(serial: String) -> Result<Vec<LogLine>, String> {
     let sdk = sdk_path()?;
     let adb = adb_bin(&sdk);
-    let out = run_output(
+    let out = run_checked(
         Command::new(&adb)
             .arg("-s")
             .arg(&serial)
@@ -785,6 +938,7 @@ fn get_logs(serial: String) -> Result<Vec<LogLine>, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             list_emulators,
             start_emulator,
@@ -795,6 +949,7 @@ pub fn run() {
             boot_simulator,
             shutdown_simulator,
             erase_simulator,
+            open_simulator_app,
             list_devices,
             list_system_images,
             create_emulator,
@@ -804,7 +959,9 @@ pub fn run() {
             snapshot_emulator,
             restore_snapshot,
             delete_snapshot,
-            get_logs
+            get_logs,
+            get_sdk_path_info,
+            set_sdk_path
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

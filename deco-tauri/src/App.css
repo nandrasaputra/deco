@@ -156,6 +156,12 @@ input {
   font-weight: 600;
 }
 
+.nav-item.disabled {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+
 .nav-item.active svg {
   color: var(--accent);
 }
@@ -238,6 +244,22 @@ input {
   color: var(--text-faint);
 }
 
+.sdk-status-main {
+  margin-bottom: 12px;
+}
+
+.sdk-status-main .sdk-status-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.btn-secondary.sm-auto {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
 /* ---------- Main area ---------- */
 .main {
   flex: 1;
@@ -262,7 +284,7 @@ input {
   min-width: 180px;
 }
 
-.sidebar-toggle {
+.header .sidebar-toggle {
   display: none;
   flex-shrink: 0;
 }
@@ -359,6 +381,11 @@ input {
 .view-toggle button.active {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+.view-toggle button:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .btn-primary {
@@ -619,7 +646,7 @@ input {
   padding: 12px 0 0;
 }
 
-.detail-panel-close {
+.detail-panel-toolbar .detail-panel-close {
   display: none;
 }
 
@@ -714,6 +741,125 @@ input {
 .action-card span {
   font-size: 11px;
   color: var(--text-primary);
+}
+
+.action-card.disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* ---------- Grid view ---------- */
+.grid-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.grid-body {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  padding: 16px;
+  align-content: start;
+}
+
+.grid-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  cursor: pointer;
+  transition: border-color 0.12s, box-shadow 0.12s;
+  position: relative;
+}
+
+.grid-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.08);
+}
+
+.grid-card.selected {
+  border-color: var(--accent);
+  background: var(--bg-selected);
+}
+
+.grid-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.grid-card-icon {
+  color: var(--text-faint);
+}
+
+.grid-card.selected .grid-card-icon {
+  color: var(--accent);
+}
+
+.grid-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.grid-status.running {
+  background: var(--status-running);
+}
+
+.grid-status.stopped {
+  background: var(--text-faint);
+}
+
+.grid-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.grid-card-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.3;
+}
+
+.grid-card-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: auto;
+  padding-top: 8px;
+}
+
+.grid-card-status-label {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.grid-card-status-label.running {
+  background: var(--status-running-bg);
+  color: var(--status-running);
+}
+
+.grid-card-status-label.stopped {
+  background: var(--status-stopped-bg);
+  color: var(--text-secondary);
 }
 
 /* ---------- Modals ---------- */
@@ -818,6 +964,16 @@ input {
   border-color: var(--accent);
 }
 
+.path-row {
+  display: flex;
+  gap: 8px;
+}
+
+.path-row input {
+  flex: 1;
+  min-width: 0;
+}
+
 .modal-error {
   padding: 10px 12px;
   border-radius: 8px;
@@ -825,6 +981,27 @@ input {
   border: 1px solid #fecaca;
   color: #dc2626;
   font-size: 12px;
+}
+
+.sdk-info-box {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border);
+}
+
+.sdk-info-box strong {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.sdk-info-box span {
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
 }
 
 .btn-secondary {
@@ -946,7 +1123,7 @@ input {
 }
 
 @media (max-width: 900px) {
-  .sidebar-toggle {
+  .header .sidebar-toggle {
     display: flex;
   }
 
@@ -994,7 +1171,7 @@ input {
   .detail-panel.open {
     transform: translateX(0);
   }
-  .detail-panel-close {
+  .detail-panel-toolbar .detail-panel-close {
     display: flex;
   }
 

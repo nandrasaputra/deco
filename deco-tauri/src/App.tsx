@@ -1,12 +1,9 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   Bot,
   Smartphone,
-  Layers,
-  MonitorSmartphone,
-  Package,
-  Settings,
   SlidersHorizontal,
   Plus,
   FolderOpen,
@@ -80,13 +77,14 @@ interface SdkInfo {
   installed: boolean;
 }
 
+interface SdkPathInfo {
+  current: string;
+  custom: string;
+}
+
 const navItems = [
-  { label: "Devices", icon: Smartphone },
-  { label: "Snapshots", icon: Layers },
-  { label: "Device Profiles", icon: MonitorSmartphone },
-  { label: "AVD Manager", icon: Package },
-  { label: "SDK Manager", icon: Settings },
-  { label: "Settings", icon: SlidersHorizontal },
+  { label: "Devices", icon: Smartphone, enabled: true },
+  { label: "Settings", icon: SlidersHorizontal, enabled: true },
 ];
 
 function App() {
@@ -94,6 +92,7 @@ function App() {
   const [emulators, setEmulators] = useState<Emulator[]>([]);
   const [simulators, setSimulators] = useState<Simulator[]>([]);
   const [sdk, setSdk] = useState<SdkInfo | null>(null);
+  const [sdkMissing, setSdkMissing] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -105,6 +104,8 @@ function App() {
   const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [view, setView] = useState<"list" | "grid">("list");
 
   async function refresh() {
     setLoading(true);
@@ -121,6 +122,9 @@ function App() {
           if (prev && emus.some((e) => e.name === prev)) return prev;
           return emus[0]?.name ?? null;
         });
+        // Emulators are readable without an SDK; only flag a hard failure if we
+        // could not even locate the AVD directory (not just a missing SDK).
+        setSdkMissing(!sdkInfo.installed);
       } else {
         const sims = await invoke<Simulator[]>("list_simulators");
         setSimulators(sims);
@@ -130,6 +134,10 @@ function App() {
         });
       }
     } catch (e) {
+      // Clear the list only on a real failure (unreadable AVD dir, etc.); a
+      // missing SDK no longer throws — see list_emulators.
+      if (platform === "android") setEmulators([]);
+      else setSimulators([]);
       setError(String(e));
     } finally {
       setLoading(false);
@@ -185,14 +193,6 @@ function App() {
       await invoke("delete_emulator", { name });
       setSelectedId(null);
       setTimeout(refresh, 800);
-    } catch (e) {
-      setError(String(e));
-    }
-  }
-
-  async function handleOpenSdkManager() {
-    try {
-      await invoke("open_sdk_manager");
     } catch (e) {
       setError(String(e));
     }
@@ -314,8 +314,12 @@ function App() {
               return (
                 <button
                   key={item.label}
-                  className={`nav-item ${item.label === "Devices" ? "active" : ""}`}
-                  title={item.label}
+                  className={`nav-item ${item.enabled ? "" : "disabled"} ${item.label === "Devices" ? "active" : ""}`}
+                  title={item.enabled ? item.label : `${item.label} (coming soon)`}
+                  disabled={!item.enabled}
+                  onClick={() => {
+                    if (item.label === "Settings") setShowSettings(true);
+                  }}
                 >
                   <Icon size={16} />
                   <span>{item.label}</span>
@@ -323,36 +327,6 @@ function App() {
               );
             })}
           </nav>
-
-          <div className="sidebar-footer">
-            <div className="quick-actions">
-              <span className="quick-actions-label">Quick Actions</span>
-              <button className="quick-action-btn" onClick={() => setShowCreate(true)}>
-                <Plus size={16} />
-                <span>Create Emulator</span>
-              </button>
-              <button className="quick-action-btn" onClick={handleOpenSdkManager}>
-                <FolderOpen size={16} />
-                <span>Open SDK Manager</span>
-              </button>
-            </div>
-
-            <div className="sdk-status">
-              <span
-                className={`sdk-status-dot ${sdk?.installed ? "ok" : "err"}`}
-              />
-              <div className="sdk-status-text">
-                <span>
-                  {sdk
-                    ? sdk.installed
-                      ? "Android SDK: Installed"
-                      : "Android SDK: Not Found"
-                    : "Detecting SDK…"}
-                </span>
-                {sdk?.path && <em>SDK Path: {sdk.path}</em>}
-              </div>
-            </div>
-          </div>
         </aside>
 
         {sidebarOpen && <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />}
@@ -424,10 +398,18 @@ function App() {
             </button>
 
             <div className="view-toggle">
-              <button className="active" title="List view">
+              <button
+                className={view === "list" ? "active" : ""}
+                title="List view"
+                onClick={() => setView("list")}
+              >
                 <List size={18} />
               </button>
-              <button title="Grid view">
+              <button
+                className={view === "grid" ? "active" : ""}
+                title="Grid view"
+                onClick={() => setView("grid")}
+              >
                 <Grid2X2 size={16} />
               </button>
             </div>
@@ -435,6 +417,33 @@ function App() {
 
           {error && <div className="error-banner">{error}</div>}
 
+          {platform === "android" && (
+          <div className="sdk-status sdk-status-main">
+            <span
+              className={`sdk-status-dot ${sdk?.installed ? "ok" : "err"}`}
+            />
+            <div className="sdk-status-text">
+              <span>
+                {sdk
+                  ? sdk.installed
+                    ? "Android SDK: Installed"
+                    : "Android SDK: Not Found"
+                  : "Detecting SDK…"}
+              </span>
+              {sdk?.path && <em>SDK Path: {sdk.path}</em>}
+            </div>
+            {sdk && (
+              <button
+                className="btn-secondary sm-auto"
+                onClick={() => setShowSettings(true)}
+              >
+                {sdk.installed ? "Change…" : "Set SDK path…"}
+              </button>
+            )}
+          </div>
+          )}
+
+{view === "list" ? (
           <div className="table-wrap">
              <div className={`table-header ${platform === "ios" ? "ios-columns" : ""}`}>
                <span>Name</span>
@@ -447,7 +456,11 @@ function App() {
                {loading && (platform === "android" ? emulators.length === 0 : simulators.length === 0) ? (
                  <div className="empty-state">Loading emulators…</div>
                ) : platform === "android" && filtered.length === 0 ? (
-                 <div className="empty-state">No emulators found.</div>
+                 <div className="empty-state">
+                    {sdkMissing
+                      ? "No emulators found. Android SDK is not available — emulator actions will be limited."
+                      : "No emulators found."}
+                  </div>
                ) : platform === "ios" && filteredSimulators.length === 0 ? (
                  <div className="empty-state">No iOS simulators found. Install a runtime in Xcode.</div>
                ) : platform === "android" ? (
@@ -570,6 +583,99 @@ function App() {
                )}
             </div>
           </div>
+           ) : (
+           <div className="grid-wrap">
+             <div className="grid-body">
+                {loading && (platform === "android" ? emulators.length === 0 : simulators.length === 0) ? (
+                  <div className="empty-state">Loading emulators…</div>
+                ) : platform === "android" && filtered.length === 0 ? (
+                  <div className="empty-state">
+                    {sdkMissing
+                      ? "No emulators found. Android SDK is not available — emulator actions will be limited."
+                      : "No emulators found."}
+                  </div>
+                ) : platform === "ios" && filteredSimulators.length === 0 ? (
+                  <div className="empty-state">No iOS simulators found. Install a runtime in Xcode.</div>
+                ) : platform === "android" ? (
+                  filtered.map((emu) => (
+                    <div
+                      key={emu.name}
+                      className={`grid-card ${emu.name === selectedId ? "selected" : ""}`}
+                      onClick={() => { setSelectedId(emu.name); setDetailOpen(true); }}
+                    >
+                      <div className="grid-card-top">
+                        <Smartphone size={28} className="grid-card-icon" />
+                        <span className={`grid-status ${emu.status.toLowerCase()}`} />
+                      </div>
+                      <strong className="grid-card-name">{emu.display_name}</strong>
+                      <span className="grid-card-meta">API {emu.api} · {emu.abi}</span>
+                      <span className="grid-card-meta">{emu.device} · {emu.resolution}</span>
+                      <div className="grid-card-actions">
+                        {emu.status === "Running" ? (
+                          <>
+                            <button className="row-action" title="Stop" onClick={(e) => { e.stopPropagation(); if (emu.serial) handleStop(emu.serial); }}>
+                              <Square size={14} />
+                            </button>
+                            <button className="row-action" title="Wipe Data" onClick={(e) => { e.stopPropagation(); handleWipe(emu.name); }}>
+                              <Trash2 size={14} />
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button className="row-action" title="Run" onClick={(e) => { e.stopPropagation(); handleStart(emu.name, false); }}>
+                              <Play size={14} />
+                            </button>
+                            <button className="row-action" title="Cold Start" onClick={(e) => { e.stopPropagation(); handleStart(emu.name, true); }}>
+                              <Snowflake size={14} />
+                            </button>
+                            <button className="row-action" title="Wipe Data" onClick={(e) => { e.stopPropagation(); handleWipe(emu.name); }}>
+                              <Trash2 size={14} />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                      <div className={`grid-card-status-label ${emu.status.toLowerCase()}`}>
+                        {emu.status}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  filteredSimulators.map((sim) => (
+                    <div
+                      key={sim.udid}
+                      className={`grid-card ${sim.udid === selectedId ? "selected" : ""}`}
+                      onClick={() => { setSelectedId(sim.udid); setDetailOpen(true); }}
+                    >
+                      <div className="grid-card-top">
+                        <Smartphone size={28} className="grid-card-icon" />
+                        <span className={`grid-status ${sim.status === "Booted" ? "running" : "stopped"}`} />
+                      </div>
+                      <strong className="grid-card-name">{sim.name}</strong>
+                      <span className="grid-card-meta">{sim.runtime}</span>
+                      <span className="grid-card-meta">{sim.device_type}</span>
+                      <div className="grid-card-actions">
+                        {sim.status === "Booted" ? (
+                          <button className="row-action" title="Shutdown" onClick={(e) => { e.stopPropagation(); handleShutdownSimulator(sim.udid); }}>
+                            <Square size={14} />
+                          </button>
+                        ) : (
+                          <button className="row-action" title="Boot" onClick={(e) => { e.stopPropagation(); handleBootSimulator(sim.udid); }}>
+                            <Play size={14} />
+                          </button>
+                        )}
+                        <button className="row-action" title="Erase Data" onClick={(e) => { e.stopPropagation(); handleEraseSimulator(sim.udid, sim.name); }}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                      <div className={`grid-card-status-label ${sim.status === "Booted" ? "running" : "stopped"}`}>
+                        {sim.status}
+                      </div>
+                    </div>
+                  ))
+                )}
+             </div>
+           </div>
+           )}
         </main>
 
         <aside className={`detail-panel ${detailOpen ? "open" : ""}`}>
@@ -669,13 +775,13 @@ function App() {
                     </button>
                     <span>View Logs</span>
                   </div>
-                  <div className="action-card">
+                  <div className="action-card disabled" title="Edit (coming soon)">
                     <button>
                       <Pencil size={18} />
                     </button>
                     <span>Edit</span>
                   </div>
-                  <div className="action-card">
+                  <div className="action-card disabled" title="Clone (coming soon)">
                     <button>
                       <Copy size={18} />
                     </button>
@@ -749,6 +855,16 @@ function App() {
 
       {showLogs && (
         <LogsModal logs={logs} onClose={() => setShowLogs(false)} />
+      )}
+
+      {showSettings && (
+        <SettingsModal
+          onClose={() => setShowSettings(false)}
+          onSaved={() => {
+            setShowSettings(false);
+            refresh();
+          }}
+        />
       )}
     </div>
   );
@@ -969,6 +1085,108 @@ function LogsModal({
         <div className="modal-footer">
           <button className="btn-primary" onClick={onClose}>
             Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SettingsModal({
+  onClose,
+  onSaved,
+}: {
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [info, setInfo] = useState<SdkPathInfo | null>(null);
+  const [customPath, setCustomPath] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const i = await invoke<SdkPathInfo>("get_sdk_path_info");
+        setInfo(i);
+        setCustomPath(i.custom);
+      } catch (e) {
+        setErr(String(e));
+      }
+    })();
+  }, []);
+
+  async function handleBrowse() {
+    try {
+      const picked = await open({
+        directory: true,
+        multiple: false,
+        title: "Select Android SDK folder",
+      });
+      if (typeof picked === "string") setCustomPath(picked);
+    } catch (e) {
+      setErr(String(e));
+    }
+  }
+
+  async function handleSave() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await invoke("set_sdk_path", { path: customPath });
+      onSaved();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2>Settings</h2>
+          <button className="modal-close" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="modal-body">
+          <label className="field">
+            <span>Android SDK Path</span>
+            <div className="path-row">
+              <input
+                placeholder="e.g. /Users/me/Library/Android/sdk"
+                value={customPath}
+                onChange={(e) => setCustomPath(e.target.value)}
+              />
+              <button className="btn-secondary" onClick={handleBrowse} type="button">
+                <FolderOpen size={14} />
+                <span>Browse…</span>
+              </button>
+            </div>
+            <em style={{ fontSize: 11, color: "var(--text-faint)" }}>
+              Leave empty to use auto-detection ({["ANDROID_SDK_ROOT", "ANDROID_HOME", "~/Library/Android/sdk"].join(" → ")})
+            </em>
+          </label>
+
+          {info && !customPath && (
+            <div className="sdk-info-box">
+              <strong>Currently detected:</strong>
+              <span>{info.current || "Not found"}</span>
+            </div>
+          )}
+
+          {err && <div className="modal-error">{err}</div>}
+        </div>
+
+        <div className="modal-footer">
+          <button className="btn-secondary" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn-primary" onClick={handleSave} disabled={busy}>
+            {busy ? "Saving…" : "Save &amp; Refresh"}
           </button>
         </div>
       </div>
