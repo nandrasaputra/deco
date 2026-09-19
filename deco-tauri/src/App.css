@@ -708,6 +708,10 @@ input {
   gap: 12px;
 }
 
+.action-row.cols-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .action-card {
   display: flex;
   flex-direction: column;
@@ -957,6 +961,23 @@ input {
   font-size: 13px;
   color: var(--text-primary);
   outline: none;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.form-grid {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.form-grid.cols-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.form-grid.cols-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .field input:focus,
@@ -1084,6 +1105,69 @@ input {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.log-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.log-search {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.log-search svg {
+  position: absolute;
+  left: 10px;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
+.log-search input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px 8px 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  font-size: 13px;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.log-search input:focus {
+  border-color: var(--accent);
+}
+
+.log-toggle {
+  flex-shrink: 0;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.log-toggle.active {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: #fef2f2;
+}
+
+.log-count {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
 }
 
 /* ---------- Responsive ---------- */

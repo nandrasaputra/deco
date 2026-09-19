@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, ask } from "@tauri-apps/plugin-dialog";
 import {
   Bot,
   Smartphone,
@@ -14,13 +14,11 @@ import {
   Snowflake,
   Trash2,
   Square,
-  Camera,
   FileText,
   Pencil,
   Copy,
   RefreshCw,
   X,
-  RotateCcw,
   Menu,
 } from "lucide-react";
 import "./App.css";
@@ -38,16 +36,20 @@ interface SystemImage {
   label: string;
 }
 
-interface SnapshotInfo {
-  name: string;
-  avd: string;
-  created: string;
-  size: string;
-  is_current: boolean;
-}
-
 interface LogLine {
   text: string;
+}
+
+interface AvdConfig {
+  display_name: string;
+  width: string;
+  height: string;
+  density: string;
+  ram: string;
+  heap: string;
+  data_partition: string;
+  sdcard: string;
+  cpu_cores: string;
 }
 
 interface Emulator {
@@ -98,10 +100,10 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [showSnapshots, setShowSnapshots] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
-  const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([]);
+  const [showEdit, setShowEdit] = useState(false);
+  const [showClone, setShowClone] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -188,7 +190,11 @@ function App() {
   }
 
   async function handleDelete(name: string) {
-    if (!confirm(`Delete emulator "${name}"? This cannot be undone.`)) return;
+    const ok = await ask(`Delete emulator "${name}"? This cannot be undone.`, {
+      title: "Delete Emulator",
+      kind: "warning",
+    });
+    if (!ok) return;
     try {
       await invoke("delete_emulator", { name });
       setSelectedId(null);
@@ -217,7 +223,11 @@ function App() {
   }
 
   async function handleEraseSimulator(udid: string, name: string) {
-    if (!confirm(`Erase all data from simulator "${name}"?`)) return;
+    const ok = await ask(`Erase all data from simulator "${name}"?`, {
+      title: "Erase Simulator",
+      kind: "warning",
+    });
+    if (!ok) return;
     try {
       await invoke("erase_simulator", { udid });
       setTimeout(refresh, 800);
@@ -226,55 +236,22 @@ function App() {
     }
   }
 
-  async function openSnapshots() {
+  async function openEdit() {
     if (!selected) return;
-    setShowSnapshots(true);
-    try {
-      const snaps = await invoke<SnapshotInfo[]>("list_snapshots", {
-        avd: selected.name,
-      });
-      setSnapshots(snaps);
-    } catch (e) {
-      setError(String(e));
+    if (selected.status === "Running") {
+      setError("Stop the emulator before editing.");
+      return;
     }
+    setShowEdit(true);
   }
 
-  async function handleSnapshotSave() {
+  function openClone() {
     if (!selected) return;
-    const snapName = prompt("Snapshot name:");
-    if (!snapName) return;
-    try {
-      await invoke("snapshot_emulator", { avd: selected.name, snapshotName: snapName });
-      const snaps = await invoke<SnapshotInfo[]>("list_snapshots", {
-        avd: selected.name,
-      });
-      setSnapshots(snaps);
-    } catch (e) {
-      setError(String(e));
+    if (selected.status === "Running") {
+      setError("Stop the emulator before cloning.");
+      return;
     }
-  }
-
-  async function handleSnapshotRestore(snapName: string) {
-    if (!selected) return;
-    try {
-      await invoke("restore_snapshot", { avd: selected.name, snapshotName: snapName });
-    } catch (e) {
-      setError(String(e));
-    }
-  }
-
-  async function handleSnapshotDelete(snapName: string) {
-    if (!selected) return;
-    if (!confirm(`Delete snapshot "${snapName}"?`)) return;
-    try {
-      await invoke("delete_snapshot", { avd: selected.name, snapshotName: snapName });
-      const snaps = await invoke<SnapshotInfo[]>("list_snapshots", {
-        avd: selected.name,
-      });
-      setSnapshots(snaps);
-    } catch (e) {
-      setError(String(e));
-    }
+    setShowClone(true);
   }
 
   async function openLogs() {
@@ -761,27 +738,21 @@ function App() {
                     </button>
                     <span>Wipe Data</span>
                   </div>
-                  <div className="action-card" onClick={openSnapshots}>
-                    <button>
-                      <Camera size={18} />
-                    </button>
-                    <span>Snapshot</span>
-                  </div>
-                </div>
-                <div className="action-row">
                   <div className="action-card" onClick={openLogs}>
                     <button>
                       <FileText size={18} />
                     </button>
                     <span>View Logs</span>
                   </div>
-                  <div className="action-card disabled" title="Edit (coming soon)">
+                </div>
+                <div className="action-row cols-3">
+                  <div className="action-card" onClick={openEdit}>
                     <button>
                       <Pencil size={18} />
                     </button>
                     <span>Edit</span>
                   </div>
-                  <div className="action-card disabled" title="Clone (coming soon)">
+                  <div className="action-card" onClick={openClone}>
                     <button>
                       <Copy size={18} />
                     </button>
@@ -842,19 +813,31 @@ function App() {
         />
       )}
 
-      {showSnapshots && selected && (
-        <SnapshotsModal
+      {showLogs && (
+        <LogsModal logs={logs} onClose={() => setShowLogs(false)} />
+      )}
+
+      {showEdit && selected && (
+        <EditEmulatorModal
           avd={selected.name}
-          snapshots={snapshots}
-          onClose={() => setShowSnapshots(false)}
-          onSave={handleSnapshotSave}
-          onRestore={handleSnapshotRestore}
-          onDelete={handleSnapshotDelete}
+          onClose={() => setShowEdit(false)}
+          onSaved={() => {
+            setShowEdit(false);
+            refresh();
+          }}
         />
       )}
 
-      {showLogs && (
-        <LogsModal logs={logs} onClose={() => setShowLogs(false)} />
+      {showClone && selected && (
+        <CloneEmulatorModal
+          source={selected.name}
+          onClose={() => setShowClone(false)}
+          onCloned={(newName) => {
+            setShowClone(false);
+            setSelectedId(newName);
+            refresh();
+          }}
+        />
       )}
 
       {showSettings && (
@@ -987,71 +970,184 @@ function CreateEmulatorModal({
   );
 }
 
-function SnapshotsModal({
+function EditEmulatorModal({
   avd,
-  snapshots,
   onClose,
-  onSave,
-  onRestore,
-  onDelete,
+  onSaved,
 }: {
   avd: string;
-  snapshots: SnapshotInfo[];
   onClose: () => void;
-  onSave: () => void;
-  onRestore: (name: string) => void;
-  onDelete: (name: string) => void;
+  onSaved: () => void;
 }) {
+  const [cfg, setCfg] = useState<AvdConfig | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const c = await invoke<AvdConfig>("get_avd_config", { name: avd });
+        setCfg(c);
+      } catch (e) {
+        setErr(String(e));
+      }
+    })();
+  }, [avd]);
+
+  function set<K extends keyof AvdConfig>(key: K, value: string) {
+    setCfg((prev) => (prev ? { ...prev, [key]: value } : prev));
+  }
+
+  async function save() {
+    if (!cfg) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await invoke("update_avd_config", { name: avd, config: cfg });
+      onSaved();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>Snapshots — {avd}</h2>
+          <h2>Edit — {avd}</h2>
           <button className="modal-close" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
 
         <div className="modal-body">
-          {snapshots.length === 0 ? (
-            <div className="empty-state">No snapshots. Save one while the emulator is running.</div>
-          ) : (
-            <div className="snapshot-list">
-              {snapshots.map((s) => (
-                <div key={s.name} className="snapshot-row">
-                  <div className="snapshot-info">
-                    <strong>{s.name}</strong>
-                    <span>{s.size}</span>
-                  </div>
-                  <div className="snapshot-actions">
-                    <button
-                      className="btn-secondary sm"
-                      onClick={() => onRestore(s.name)}
-                      title="Restore"
-                    >
-                      <RotateCcw size={14} />
-                    </button>
-                    <button
-                      className="btn-secondary sm danger"
-                      onClick={() => onDelete(s.name)}
-                      title="Delete"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
+          {!cfg && !err && <div className="empty-state">Loading config…</div>}
+          {cfg && (
+            <>
+              <label className="field">
+                <span>Display Name</span>
+                <input value={cfg.display_name} onChange={(e) => set("display_name", e.target.value)} />
+              </label>
+              <div className="form-grid cols-3">
+                <label className="field">
+                  <span>Width</span>
+                  <input value={cfg.width} onChange={(e) => set("width", e.target.value)} inputMode="numeric" />
+                </label>
+                <label className="field">
+                  <span>Height</span>
+                  <input value={cfg.height} onChange={(e) => set("height", e.target.value)} inputMode="numeric" />
+                </label>
+                <label className="field">
+                  <span>Density</span>
+                  <input value={cfg.density} onChange={(e) => set("density", e.target.value)} inputMode="numeric" />
+                </label>
+              </div>
+              <div className="form-grid cols-3">
+                <label className="field">
+                  <span>RAM (MB)</span>
+                  <input value={cfg.ram} onChange={(e) => set("ram", e.target.value)} inputMode="numeric" />
+                </label>
+                <label className="field">
+                  <span>Heap (MB)</span>
+                  <input value={cfg.heap} onChange={(e) => set("heap", e.target.value)} inputMode="numeric" />
+                </label>
+                <label className="field">
+                  <span>CPU Cores</span>
+                  <input value={cfg.cpu_cores} onChange={(e) => set("cpu_cores", e.target.value)} inputMode="numeric" />
+                </label>
+              </div>
+              <div className="form-grid cols-2">
+                <label className="field">
+                  <span>Data Partition</span>
+                  <input value={cfg.data_partition} onChange={(e) => set("data_partition", e.target.value)} placeholder="e.g. 10G" />
+                </label>
+                <label className="field">
+                  <span>SD Card</span>
+                  <input value={cfg.sdcard} onChange={(e) => set("sdcard", e.target.value)} placeholder="e.g. 512M" />
+                </label>
+              </div>
+            </>
           )}
+          {err && <div className="modal-error">{err}</div>}
         </div>
 
         <div className="modal-footer">
-          <button className="btn-secondary" onClick={onSave}>
-            <Camera size={14} />
-            <span>Save Snapshot</span>
+          <button className="btn-secondary" onClick={onClose}>
+            Cancel
           </button>
-          <button className="btn-primary" onClick={onClose}>
-            Close
+          <button className="btn-primary" onClick={save} disabled={busy || !cfg}>
+            {busy ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CloneEmulatorModal({
+  source,
+  onClose,
+  onCloned,
+}: {
+  source: string;
+  onClose: () => void;
+  onCloned: (newName: string) => void;
+}) {
+  const [newName, setNewName] = useState(`${source}_copy`);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function clone() {
+    const trimmed = newName.trim();
+    if (!trimmed) {
+      setErr("Please enter a name.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await invoke("clone_emulator", { source, newName: trimmed });
+      onCloned(trimmed);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2>Clone — {source}</h2>
+          <button className="modal-close" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="modal-body">
+          <label className="field">
+            <span>New AVD Name</span>
+            <input
+              placeholder="e.g. Pixel_7_copy"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+            />
+            <em style={{ fontSize: 11, color: "var(--text-faint)" }}>
+              Letters, numbers, _, - and . only. Starts fresh without user data.
+            </em>
+          </label>
+          {err && <div className="modal-error">{err}</div>}
+        </div>
+
+        <div className="modal-footer">
+          <button className="btn-secondary" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn-primary" onClick={clone} disabled={busy}>
+            {busy ? "Cloning…" : "Clone"}
           </button>
         </div>
       </div>
@@ -1066,6 +1162,15 @@ function LogsModal({
   logs: string[];
   onClose: () => void;
 }) {
+  const [query, setQuery] = useState("");
+  const [crashOnly, setCrashOnly] = useState(false);
+
+  const filtered = logs.filter((line) => {
+    if (crashOnly && !isCrashLine(line)) return false;
+    if (query && !line.toLowerCase().includes(query.toLowerCase())) return false;
+    return true;
+  });
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal modal-lg" onClick={(e) => e.stopPropagation()}>
@@ -1076,10 +1181,32 @@ function LogsModal({
           </button>
         </div>
         <div className="modal-body">
+          <div className="log-toolbar">
+            <div className="log-search">
+              <Search size={14} />
+              <input
+                placeholder="Search logs…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </div>
+            <button
+              className={`log-toggle ${crashOnly ? "active" : ""}`}
+              onClick={() => setCrashOnly((v) => !v)}
+              title="Show only crash / fatal lines"
+            >
+              Crashes
+            </button>
+            <span className="log-count">
+              {filtered.length} / {logs.length}
+            </span>
+          </div>
           {logs.length === 0 ? (
             <div className="empty-state">Loading logs…</div>
+          ) : filtered.length === 0 ? (
+            <div className="empty-state">No matching lines.</div>
           ) : (
-            <pre className="logcat">{logs.join("\n")}</pre>
+            <pre className="logcat">{filtered.join("\n")}</pre>
           )}
         </div>
         <div className="modal-footer">
@@ -1090,6 +1217,10 @@ function LogsModal({
       </div>
     </div>
   );
+}
+
+function isCrashLine(line: string): boolean {
+  return /(^|[\s(:])E[\/:]|(^|[\s(:])F[\/:]|fatal exception|androidruntime|caused by|\bcrash\b|has died/i.test(line);
 }
 
 function SettingsModal({

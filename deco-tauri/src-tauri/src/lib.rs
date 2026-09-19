@@ -690,6 +690,7 @@ fn delete_emulator(name: String) -> Result<(), String> {
                 if let Some(serial) = &e.serial {
                     let adb = adb_bin(&sdk);
                     let _ = run_output(Command::new(&adb).arg("-s").arg(serial).arg("emu").arg("kill"));
+                    std::thread::sleep(std::time::Duration::from_secs(2));
                 }
             }
         }
@@ -913,6 +914,228 @@ fn delete_snapshot(avd: String, snapshot_name: String) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AvdConfig {
+    pub display_name: String,
+    pub width: String,
+    pub height: String,
+    pub density: String,
+    pub ram: String,
+    pub heap: String,
+    pub data_partition: String,
+    pub sdcard: String,
+    pub cpu_cores: String,
+}
+
+fn avd_config_path(name: &str) -> Result<PathBuf, String> {
+    Ok(avd_dir()?.join(format!("{name}.avd/config.ini")))
+}
+
+fn is_running(name: &str) -> bool {
+    match list_emulators() {
+        Ok(emus) => emus
+            .iter()
+            .any(|e| e.name == name && e.status == "Running"),
+        Err(_) => false,
+    }
+}
+
+fn valid_avd_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+}
+
+#[tauri::command]
+fn get_avd_config(name: String) -> Result<AvdConfig, String> {
+    let cfg = parse_ini(&avd_config_path(&name)?);
+    Ok(AvdConfig {
+        display_name: cfg.get("avd.ini.displayname").cloned().unwrap_or_default(),
+        width: cfg.get("hw.lcd.width").cloned().unwrap_or_default(),
+        height: cfg.get("hw.lcd.height").cloned().unwrap_or_default(),
+        density: cfg.get("hw.lcd.density").cloned().unwrap_or_default(),
+        ram: cfg.get("hw.ramSize").cloned().unwrap_or_default(),
+        heap: cfg.get("vm.heapSize").cloned().unwrap_or_default(),
+        data_partition: cfg.get("disk.dataPartition.size").cloned().unwrap_or_default(),
+        sdcard: cfg.get("sdcard.size").cloned().unwrap_or_default(),
+        cpu_cores: cfg.get("hw.cpu.ncore").cloned().unwrap_or_default(),
+    })
+}
+
+#[tauri::command]
+fn update_avd_config(name: String, config: AvdConfig) -> Result<(), String> {
+    if is_running(&name) {
+        return Err("Stop the emulator before editing.".to_string());
+    }
+    let display_name = config.display_name.trim().to_string();
+    if display_name.is_empty() {
+        return Err("Display name cannot be empty.".to_string());
+    }
+    let width: u32 = config.width.trim().parse().map_err(|_| "Width must be a number.".to_string())?;
+    let height: u32 = config.height.trim().parse().map_err(|_| "Height must be a number.".to_string())?;
+    let density: u32 = config.density.trim().parse().map_err(|_| "Density must be a number.".to_string())?;
+    let ram: u32 = config.ram.trim().parse().map_err(|_| "RAM must be a number (MB).".to_string())?;
+    let heap: u32 = config.heap.trim().parse().map_err(|_| "Heap must be a number (MB).".to_string())?;
+    let cpu_cores: u32 = config.cpu_cores.trim().parse().map_err(|_| "CPU cores must be a number.".to_string())?;
+    if !(320..=4320).contains(&width) || !(320..=4320).contains(&height) {
+        return Err("Resolution must be between 320 and 4320.".to_string());
+    }
+    if !(120..=640).contains(&density) {
+        return Err("Density must be between 120 and 640.".to_string());
+    }
+    if !(512..=16384).contains(&ram) {
+        return Err("RAM must be between 512 and 16384 MB.".to_string());
+    }
+    if !(64..=2048).contains(&heap) {
+        return Err("Heap must be between 64 and 2048 MB.".to_string());
+    }
+    if !(1..=16).contains(&cpu_cores) {
+        return Err("CPU cores must be between 1 and 16.".to_string());
+    }
+    if config.data_partition.trim().is_empty() || config.sdcard.trim().is_empty() {
+        return Err("Storage sizes cannot be empty (e.g. 10G, 512M).".to_string());
+    }
+
+    let updates = [
+        ("avd.ini.displayname", display_name),
+        ("hw.lcd.width", width.to_string()),
+        ("hw.lcd.height", height.to_string()),
+        ("hw.lcd.density", density.to_string()),
+        ("hw.ramSize", ram.to_string()),
+        ("vm.heapSize", heap.to_string()),
+        ("disk.dataPartition.size", config.data_partition.trim().to_string()),
+        ("sdcard.size", config.sdcard.trim().to_string()),
+        ("hw.cpu.ncore", cpu_cores.to_string()),
+    ];
+
+    let path = avd_config_path(&name)?;
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Could not read AVD config: {e}"))?;
+    let mut seen = std::collections::HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some((k, _)) = trimmed.split_once('=') {
+            let key = k.trim();
+            if let Some((_, v)) = updates.iter().find(|(uk, _)| *uk == key) {
+                out.push(format!("{key}={v}"));
+                seen.insert(key.to_string());
+                continue;
+            }
+        }
+        out.push(line.to_string());
+    }
+    for (k, v) in &updates {
+        if !seen.contains(*k) {
+            out.push(format!("{k}={v}"));
+        }
+    }
+    std::fs::write(&path, out.join("\n") + "\n")
+        .map_err(|e| format!("Could not write AVD config: {e}"))?;
+    Ok(())
+}
+
+fn copy_avd_dir_filtered(src: &Path, dst: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| format!("Could not create AVD folder: {e}"))?;
+    for entry in std::fs::read_dir(src).map_err(|e| format!("Could not read AVD folder: {e}"))? {
+        let entry = entry.map_err(|e| format!("Could not read AVD entry: {e}"))?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.ends_with(".lock") || name == "snapshots" || name.ends_with(".qcow2") {
+            continue;
+        }
+        if name.ends_with(".img") && (name.starts_with("userdata") || name.starts_with("cache")) {
+            continue;
+        }
+        let src_path = entry.path();
+        let dst_path = dst.join(&name);
+        if src_path.is_dir() {
+            copy_avd_dir_filtered(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path).map_err(|e| format!("Could not copy {name}: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn clone_emulator(source: String, new_name: String) -> Result<(), String> {
+    let new_name = new_name.trim().to_string();
+    if !valid_avd_name(&new_name) {
+        return Err("Name may only contain letters, numbers, _, - and .".to_string());
+    }
+    if is_running(&source) {
+        return Err("Stop the emulator before cloning.".to_string());
+    }
+    let dir = avd_dir()?;
+    let src_ini = dir.join(format!("{source}.ini"));
+    let src_avd = dir.join(format!("{source}.avd"));
+    if !src_ini.exists() || !src_avd.is_dir() {
+        return Err(format!("Source AVD \"{source}\" not found."));
+    }
+    if dir.join(format!("{new_name}.ini")).exists() || dir.join(format!("{new_name}.avd")).exists() {
+        return Err(format!("An AVD named \"{new_name}\" already exists."));
+    }
+
+    let dst_avd = dir.join(format!("{new_name}.avd"));
+    copy_avd_dir_filtered(&src_avd, &dst_avd)?;
+
+    let config_path = dst_avd.join("config.ini");
+    let content = std::fs::read_to_string(&config_path).unwrap_or_default();
+    let mut seen_display = false;
+    let mut seen_id = false;
+    let mut out: Vec<String> = Vec::new();
+    for line in content.lines() {
+        if let Some((k, _)) = line.trim().split_once('=') {
+            match k.trim() {
+                "AvdId" => {
+                    out.push(format!("AvdId={new_name}"));
+                    seen_id = true;
+                    continue;
+                }
+                "avd.ini.displayname" => {
+                    out.push(format!("avd.ini.displayname={new_name}"));
+                    seen_display = true;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        out.push(line.to_string());
+    }
+    if !seen_id {
+        out.push(format!("AvdId={new_name}"));
+    }
+    if !seen_display {
+        out.push(format!("avd.ini.displayname={new_name}"));
+    }
+    std::fs::write(&config_path, out.join("\n") + "\n")
+        .map_err(|e| format!("Could not write cloned config: {e}"))?;
+
+    let new_path = dst_avd.to_string_lossy().to_string();
+    let ini_content = format!("avd.ini.encoding=UTF-8\npath={new_path}\npath.rel=avd/{new_name}.avd\ntarget=android-33\n");
+    if let Ok(src_ini_content) = std::fs::read_to_string(&src_ini) {
+        let mut target = "android-33".to_string();
+        for line in src_ini_content.lines() {
+            if let Some((k, v)) = line.split_once('=') {
+                if k.trim() == "target" {
+                    target = v.trim().to_string();
+                }
+            }
+        }
+        std::fs::write(
+            dir.join(format!("{new_name}.ini")),
+            format!("avd.ini.encoding=UTF-8\npath={new_path}\npath.rel=avd/{new_name}.avd\ntarget={target}\n"),
+        )
+        .map_err(|e| format!("Could not write cloned AVD file: {e}"))?;
+    } else {
+        std::fs::write(dir.join(format!("{new_name}.ini")), ini_content)
+            .map_err(|e| format!("Could not write cloned AVD file: {e}"))?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn get_logs(serial: String) -> Result<Vec<LogLine>, String> {
     let sdk = sdk_path()?;
@@ -954,6 +1177,9 @@ pub fn run() {
             list_system_images,
             create_emulator,
             delete_emulator,
+            get_avd_config,
+            update_avd_config,
+            clone_emulator,
             open_sdk_manager,
             list_snapshots,
             snapshot_emulator,
