@@ -32,38 +32,44 @@ Simulator management is the first module. Deco is meant to grow into a broader d
 ## Requirements
 
 - macOS (primary target; Linux/Windows untested)
+- Node.js 18+ and npm (`node --version`, `npm --version`)
+- Rust stable toolchain via [rustup](https://rustup.rs) (`rustc --version`)
+- Xcode command line tools (`xcode-select --install`) — required for Rust builds on macOS
 - For Android: SDK with `emulator`, `platform-tools` (`adb`), and `cmdline-tools` (`avdmanager`, `sdkmanager`)
-- For iOS: Xcode with at least one installed simulator runtime (`xcrun simctl`)
-- Node.js 18+ and npm
-- Rust stable toolchain (via [rustup](https://rustup.rs))
+- For iOS: Xcode with at least one installed simulator runtime (`xcrun simctl list devices`)
 
 The SDK path is resolved as `ANDROID_SDK_ROOT` → `ANDROID_HOME` → `~/Library/Android/sdk`, and can be overridden in the app's Settings.
 
-## Quick start
+## Getting started
+
+### 1. Clone and install
+
+```bash
+git clone git@github.com:nandrasaputra/deco.git
+cd deco/deco-tauri
+npm install
+```
+
+### 2. Run in debug
+
+This is the main day-to-day workflow — native window + Rust backend, with Vite hot reload for the frontend:
 
 ```bash
 cd deco-tauri
-npm install
-
-# Run the native app (Vite hot reload for the frontend)
 npm run tauri dev
 ```
 
-## Build a release
+What happens: Vite serves the UI on `http://localhost:1420` (see `devUrl` in `src-tauri/tauri.conf.json`) and Tauri opens it in a native WebView. Edit files under `src/` and the window reloads; Rust changes in `src-tauri/src/` recompile and relaunch.
+
+Frontend-only (no Rust backend — Tauri `invoke()` calls will fail):
 
 ```bash
-cd deco-tauri
-npm run tauri build
+npm run dev
 ```
 
-This produces:
+### 3. Checks
 
-- `src-tauri/target/release/bundle/macos/Deco.app`
-- `src-tauri/target/release/bundle/dmg/Deco_0.1.0_aarch64.dmg`
-
-Open the `.dmg` and drag Deco to Applications. The app is unsigned, so on first launch right-click → Open to allow it.
-
-## Checks
+Run before committing:
 
 ```bash
 cd deco-tauri
@@ -72,6 +78,38 @@ npx tsc --noEmit        # frontend typecheck
 cd src-tauri
 cargo check             # backend check
 ```
+
+`npm run build` (from `deco-tauri/`) runs `tsc && vite build` for a production frontend bundle into `dist/`.
+
+### 4. Release build and install
+
+```bash
+cd deco-tauri
+npm run tauri build
+```
+
+This runs the frontend production build, compiles Rust in release mode, then bundles the app. Output:
+
+- `src-tauri/target/release/bundle/macos/Deco.app`
+- `src-tauri/target/release/bundle/dmg/Deco_0.1.0_aarch64.dmg`
+
+Install: open the `.dmg` and drag Deco to Applications. The app is unsigned, so on first launch right-click → Open to allow it (or `xattr -d com.apple.quarantine /Applications/Deco.app`).
+
+Variants:
+
+```bash
+npm run tauri build -- --debug   # faster debug bundle for local testing
+npm run tauri build -- --no-bundle  # compile `src-tauri/target/release/deco` binary only, skip .app/.dmg
+```
+
+### Troubleshooting
+
+- `cargo: command not found` — install rustup and restart the shell so `~/.cargo/bin` is on `PATH`.
+- Port `1420` in use — stop the other `vite`/`tauri dev` process, or change `devUrl` and Vite's port together.
+- Blank window on `tauri dev` — make sure `npm run dev` alone loads at `http://localhost:1420` first; check the terminal running `beforeDevCommand` for errors.
+- `adb` / emulator not found — set the SDK path in the app's Settings, or export `ANDROID_SDK_ROOT=$HOME/Library/Android/sdk`.
+- `avdmanager` / `sdkmanager` missing — install `cmdline-tools;latest` via Android Studio's SDK Manager or `sdkmanager`.
+- First `tauri build` is slow — Rust release compilation can take several minutes; subsequent builds are incremental.
 
 ## How it works
 
